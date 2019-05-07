@@ -1,0 +1,39 @@
+{
+  "name": "distproxies",
+  "version": "1.0.0",
+  "description": "distributed proxies for the rest of us",
+  "main": "app.js",
+  "bin": {
+    "distproxies": "./bin/distproxies"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nicoandmee/distproxies.git"
+  },
+  "keywords": [
+    "proxy",
+    "scraping"
+  ],
+  "author": "nicomee",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/nicoandmee/distproxies/issues"
+  },
+  "homepage": "https://github.com/nicoandmee/distproxies#readme",
+  "dependencies": {
+    "assert": "^1.4.1",
+    "body-parser": "^1.19.0",
+    "express": "^4.16.4",
+    "got": "^9.6.0",
+    "http": "0.0.0",
+    "http-proxy": "^1.17.0",
+    "net": "^1.0.2",
+    "node-cleanup": "^2.1.2",
+    "request": "^2.88.0",
+    "socksv5": "0.0.6",
+    "throat": "^4.1.0"
+  }
+}

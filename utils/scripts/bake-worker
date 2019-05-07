@@ -1,0 +1,228 @@
+#!/usr/bin/env node
+
+const AWS = require('aws-sdk');
+const fs = require('fs');
+const path = require('path');
+const assert = require('assert');
+const packageJson = require('../../package.json');
+
+const wait = t => new Promise(r => setTimeout(r, t));
+
+const KeyNames = {
+  'us-east-1': 'majorkey',
+};
+
+const ImageIds = {
+  'us-west-1': 'ami-07585467',
+  'us-east-1': 'ami-02f1fdcc4b739b152',
+};
+
+const SecurityGroups = {
+  'us-west-1': ['sg-0214cf3a1d9d34b36'],
+  'us-west-2': ['sg-0cf85e03f28facdae'],
+  'us-east-1': ['sg-0461992ee83a743a7'],
+  'us-east-2': ['sg-049e4f1699b005992'],
+};
+
+const SubnetIDs = {
+  'us-west-1': 'subnet-6dcfd00a',
+  'us-east-1': 'subnet-5eba2b70',
+  'us-east-2': 'subnet-c4758b88',
+};
+
+let region;
+
+function prepareUserData () {
+  return fs.readFileSync(path.join(__dirname, './worker-build-ami.sh')).toString().replace('<<<CREDENTIALS>>>', `# Begin credentials
+export NPM_TOKEN="${process.env.NPM_TOKEN}"
+export CONFIG_AZURE_STORAGE_ACCOUNT="${process.env.CONFIG_AZURE_STORAGE_ACCOUNT}"
+export CONFIG_AZURE_STORAGE_SHARED_ACCESS_SIGNATURE="${process.env.CONFIG_AZURE_STORAGE_SHARED_ACCESS_SIGNATURE}"
+export WORKER_TAGS="${process.env.WORKER_TAGS}"
+# End credentials`).replace('<<<COMMANDS>>>', process.env.COMMANDS || '')
+}
+
+async function runInstance({ ec2 }) {
+  const { Instances } = await ec2.runInstances({
+    ImageId: ImageIds[region],
+    InstanceType: 'm4.4xlarge',
+    MinCount: 1,
+    MaxCount: 1,
+    UserData: new Buffer(prepareUserData()).toString('base64'),
+    KeyName: KeyNames[region],
+    SecurityGroupIds: SecurityGroups[region],
+    SubnetId: SubnetIDs[region],
+  }).promise();
+  const [instance] = Instances;
+  return instance;
+}
+
+async function monitorInstance({ ec2, instance }) {
+  const startedAt = Date.now();
+  let lastState;
+  for (;;) {
+    assert(Date.now() - startedAt < 10 * 60 * 1000, 'timeout');
+
+    let { Output } = await ec2.getConsoleOutput({ InstanceId: instance.InstanceId }).promise();
+    if (Output) {
+      Output = Buffer.from(Output, 'base64').toString();
+      console.log(Output);
+    }
+
+    const { Reservations } = await ec2.describeInstances({ InstanceIds: [instance.InstanceId] }).promise();
+    const state = ((((Reservations || {})[0].Instances || {})[0] || {}).State || {}).Name;
+
+    if (state !== lastState) {
+      lastState = state;
+      console.log(`instance state: ${state}`);
+    }
+
+    if (Output) {
+      assert(!~Output.indexOf('[[WORKER-BUILD-FAILURE]]]'), 'WORKER BUILD FAILURE');
+    }
+
+    if (state === 'stopped') {
+      return;
+    }
+
+    await wait(1000);
+  }
+}
+
+async function monitorImage({ ec2, ImageId }) {
+  const startedAt = Date.now();
+  let lastState;
+  for (;;) {
+    assert(Date.now() - startedAt < 10 * 60 * 1000, 'timeout');
+
+    const { Images } = await ec2.describeImages({ ImageIds: [ImageId] }).promise();
+    const { State } = Images[0];
+
+    if (State !== lastState) {
+      lastState = State;
+      console.log(`image state: ${State}`);
+    }
+
+    if (State === 'available') {
+      return;
+    }
+
+    await wait(1000);
+  }
+}
+
+async function createImage({ ec2, instance }) {
+  await ec2.createImage({
+    InstanceId: instance.InstanceId,
+    Name: `${packageJson.name}@${packageJson.version}${process.env.WORKER_TAGS}`.substr(0, 128),
+  });
+}
+
+const CleanUps = [];
+
+async function main() {
+  assert(process.env.NPM_TOKEN, 'NPM_TOKEN required');
+  assert(process.env.CONFIG_AZURE_STORAGE_ACCOUNT, 'CONFIG_AZURE_STORAGE_ACCOUNT required');
+  assert(process.env.CONFIG_AZURE_STORAGE_SHARED_ACCESS_SIGNATURE, 'CONFIG_AZURE_STORAGE_SHARED_ACCESS_SIGNATURE required');
+  assert(process.env.WORKER_TAGS, 'WORKER_TAGS required');
+
+  const Usage = `Usage: ${process.argv.concat('[region]', '[auto-scaling-group-name]', '[target-instance-type]').join(' ')}`;
+
+  region = process.argv[2];
+  assert(region, Usage);
+
+  const AutoScalingGroupName = process.argv[3];
+  assert(AutoScalingGroupName, Usage);
+
+  const InstanceType = process.argv[4];
+  assert(InstanceType, Usage);
+
+  AWS.config.update({ region });
+  const ec2 = new AWS.EC2({ apiVersion: '2016-11-15' });
+  const autoscaling = new AWS.AutoScaling();
+
+  const instance = await runInstance({ ec2 });
+  CleanUps.push(async () => await ec2.terminateInstances({ InsttrnceIds: [instance.InstanceId] }).promise());
+  console.log('instance created', instance);
+
+  try {
+    console.log('monitoring instance');
+    await monitorInstance({ ec2, instance });
+
+    console.log('creating image');
+
+    const { ImageId } = await ec2.createImage({
+      InstanceId: instance.InstanceId,
+      Name: `${packageJson.name}/${packageJson.version}/${process.env.WORKER_TAGS}/${Date.now()}`.replace(/[^a-zA-Z0-9-_\/\.\(\)]/g, '-').replace(/[-]+/g, '-').substr(0, 128),
+    }).promise();
+
+    console.log(`ImageId: ${ImageId}`);
+
+    await monitorImage({ ec2, ImageId });
+
+    const LaunchConfigurationName = `${packageJson.name}/${packageJson.version}/${process.env.WORKER_TAGS}/${Date.now()}`.replace(/[^a-zA-Z0-9-_\/\.\(\)]/g, '-').replace(/[-]+/g, '-');
+
+    console.log(`creating launch configuration: ${LaunchConfigurationName}`);
+
+    await autoscaling.createLaunchConfiguration({
+      LaunchConfigurationName,
+      ImageId,
+      InstanceType,
+      SecurityGroups: SecurityGroups[region],
+      KeyName: KeyNames[region],
+      InstanceMonitoring: {
+        Enabled: true,
+      },
+    }).promise();
+
+    console.log(`updating auto scaling group: ${AutoScalingGroupName}`);
+
+    await autoscaling.updateAutoScalingGroup({
+      AutoScalingGroupName,
+      LaunchConfigurationName,
+    }).promise();
+
+    console.log('fetcing auto scaling group');
+
+    const { AutoScalingGroups } = await autoscaling.describeAutoScalingGroups({
+      AutoScalingGroupNames: [AutoScalingGroupName],
+    }).promise();
+    const { Instances = [] } = AutoScalingGroups[0];
+
+    console.log('terminating instances');
+
+    for (const [idx, i] of Instances.entries()) {
+      console.log(`terminate ${i.InstanceId} [${idx}/${Instances.length}]`);
+      try {
+        await autoscaling.terminateInstanceInAutoScalingGroup({ InstanceId: i.InstanceId, ShouldDecrementDesiredCapacity: false }).promise();
+        // await ec2.terminateInstances({ InstanceIds: [ i.InstanceId ] }).promise()
+        await wait(5000);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    console.log('Done!');
+  } catch (e) {
+    console.error(e);
+  } finally {
+    console.log('terminating instance');
+    await Promise.all(CleanUps.map(a => a()));
+  }
+}
+
+process.on('SIGINT', () => {
+  console.log('cleaning up');
+  Promise.all(CleanUps.map(a => a())).then(() => {
+    console.log('cleaned up');
+    process.exit(0);
+  }, (err) => {
+    console.error(err.stack);
+    process.exit(1);
+  });
+});
+
+// Create the instance
+main().then(console.log).catch((err) => {
+  console.error(err.stack);
+  process.exit(1);
+});

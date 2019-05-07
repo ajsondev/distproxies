@@ -74,7 +74,8 @@ async function getHTTPProxy() {
   }
   const proxy = response.body;
   return proxy;
-}```
+}
+```
 
 As a reminder, the `?pool=public` portion of the url indicates the worker manager should give you a public proxy vs. a private proxy which would be only usable for other machines running on AWS. 
 
@@ -90,5 +91,5 @@ Please!
 This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details
 
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbODEwNTc4MDM5XX0=
+eyJoaXN0b3J5IjpbLTI2MjU3MTMxOSw4MTA1NzgwMzldfQ==
 -->

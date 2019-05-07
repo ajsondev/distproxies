@@ -82,6 +82,7 @@ As a reminder, the `?pool=public` portion of the url indicates the worker manage
 ## Future Development
 I haven't had much time to sink into this but I  would love to see the same idea applied across multiple cloud provides, improvement in the way connections are maintained between the worker and worker manager (I envision something akin to a 'sticky ELB' so connections won't get dropped on occasion or when the system is under heavy load.
 
+If you want to talk more about it or other web-scraping/bot-related banter I'm fairly active on Intoli's Slack community for web scrapers. Check it out here: 
 
 
 ## Contributing
@@ -91,5 +92,5 @@ Please!
 This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details
 
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbLTI2MjU3MTMxOSw4MTA1NzgwMzldfQ==
+eyJoaXN0b3J5IjpbNjE5NTMxOTY2LDgxMDU3ODAzOV19
 -->

@@ -1,0 +1,3 @@
+#!/usr/bin/env node --harmony
+
+require('./launch')('./scripts/worker')

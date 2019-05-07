@@ -73,7 +73,7 @@ for i in `seq 1 $retries`; do
 done
 
 for i in `seq 1 $retries`; do
-  npm i --unsafe-perm -g pm2@latest @nicomee/anonyps@latest n && break
+  npm i --unsafe-perm -g pm2@latest distproxies@latest n && break
   echo "failed, waiting to retry..."
   sleep $wait_retry
 done

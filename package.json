@@ -2,8 +2,9 @@
   "name": "distproxies",
   "version": "1.0.0",
   "description": "distributed proxies for the rest of us",
-  "main": "app.js",
+  "main": "worker",
   "bin": {
+    "worker": "./bin/worker",
     "distproxies": "./bin/distproxies"
   },
   "scripts": {
